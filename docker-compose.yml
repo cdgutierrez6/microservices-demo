@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+
+  # ─── Infrastructure ────────────────────────────────────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - microservices-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - microservices-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks:
+      - microservices-net
+
+  postgres-orders:
+    image: postgres:15-alpine
+    container_name: postgres-orders
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: orders_user
+      POSTGRES_PASSWORD: orders_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-orders-data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  postgres-users:
+    image: postgres:15-alpine
+    container_name: postgres-users
+    environment:
+      POSTGRES_DB: users_db
+      POSTGRES_USER: users_user
+      POSTGRES_PASSWORD: users_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-users-data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - microservices-net
+
+  # ─── Services ──────────────────────────────────────────────────────────────
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      ORDER_SERVICE_URL: http://order-service:8081
+      USER_SERVICE_URL: http://user-service:8082
+      REDIS_HOST: redis
+    depends_on:
+      - redis
+      - order-service
+      - user-service
+    networks:
+      - microservices-net
+
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-orders:5432/orders_db
+      SPRING_DATASOURCE_USERNAME: orders_user
+      SPRING_DATASOURCE_PASSWORD: orders_pass
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - postgres-orders
+      - kafka
+    networks:
+      - microservices-net
+
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-users:5432/users_db
+      SPRING_DATASOURCE_USERNAME: users_user
+      SPRING_DATASOURCE_PASSWORD: users_pass
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+    depends_on:
+      - postgres-users
+      - kafka
+      - redis
+    networks:
+      - microservices-net
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    ports:
+      - "8083:8083"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge
+
+volumes:
+  postgres-orders-data:
+  postgres-users-data:
