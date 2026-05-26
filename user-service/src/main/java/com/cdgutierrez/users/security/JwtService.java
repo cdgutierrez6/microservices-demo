@@ -29,7 +29,10 @@ public class JwtService {
         var now = new Date();
         return Jwts.builder()
                 .subject(userId.toString())
-                .claims(Map.of("email", email))
+                .claims(Map.of(
+                        "email", email,
+                        "jti",   UUID.randomUUID().toString()   // unique per token
+                ))
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expirationMs))
                 .signWith(secretKey)
