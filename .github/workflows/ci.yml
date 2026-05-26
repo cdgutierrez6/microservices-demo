@@ -7,8 +7,11 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Opt-in to Node.js 24 runner (deprecation of Node.js 20)
+
 jobs:
-  # ── 1. Build + Tests + JaCoCo ──────────────────────────────────────────────
+  # ── 1. Build + Tests + JaCoCo ────────────────────────────────────────────────────────────────────
   test:
     name: 🧪 Build, Tests & JaCoCo Coverage
     runs-on: ubuntu-latest
@@ -38,7 +41,7 @@ jobs:
             notification-service/target/site/jacoco/jacoco.xml
           retention-days: 1
 
-  # ── 2. SonarCloud Quality Gate ─────────────────────────────────────────────
+  # ── 2. SonarCloud Quality Gate ─────────────────────────────────────────────────────────────────
   sonar:
     name: 📊 SonarCloud
     runs-on: ubuntu-latest
