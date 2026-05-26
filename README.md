@@ -18,35 +18,39 @@ Reference implementation of an event-driven microservices architecture, based on
 
 ### System Architecture
 
-```
-                          ┌─────────────────────────────────────────────────┐
-                          │                  API GATEWAY                    │
-                          │         (Spring Cloud Gateway :8080)            │
-                          └──────────┬──────────────┬───────────────────────┘
-                                     │              │
-                    ┌────────────────▼──┐    ┌──────▼────────────────┐
-                    │  ORDER SERVICE    │    │   USER SERVICE        │
-                    │  (Java/Spring)    │    │   (Java/Spring)       │
-                    │  :8081            │    │   :8082               │
-                    └──────────┬────────┘    └──────┬────────────────┘
-                               │                    │
-                               ▼                    ▼
-                    ┌─────────────────────────────────────────┐
-                    │           APACHE KAFKA                  │
-                    │     orders-topic | user-events          │
-                    │     notifications-topic                 │
-                    └──────────┬──────────────────────────────┘
-                               │
-                    ┌──────────▼────────────────┐
-                    │   NOTIFICATION SERVICE    │
-                    │   (Consumer/Producer)     │
-                    │   :8083                   │
-                    └───────────────────────────┘
+```mermaid
+graph TB
+    Client(["👤 Client"]) --> GW
 
-  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-  │  PostgreSQL      │   │  PostgreSQL      │   │  Redis Cache    │
-  │  orders_db       │   │  users_db        │   │  (Sessions)     │
-  └─────────────────┘   └─────────────────┘   └─────────────────┘
+    subgraph GATEWAY["API Gateway · :8080"]
+        GW["Spring Cloud Gateway\nRate Limiting · Redis 100 req/s\nCircuit Breaker · Resilience4j\nJWT Validation · Correlation ID"]
+    end
+
+    GW --> OS
+    GW --> US
+
+    subgraph SERVICES["Microservices"]
+        OS["Order Service · :8081\nState Machine\nOutbox Pattern\nFlyway Migrations"]
+        US["User Service · :8082\nJWT Auth · JJWT\nCache-Aside · Redis\nKafka Publisher"]
+    end
+
+    OS -->|"order.created / order.updated"| KF
+    US -->|"user.registered"| KF
+
+    subgraph KAFKA["Event Bus"]
+        KF[["Apache Kafka\norders-topic · user-events\nnotifications-topic"]]
+    end
+
+    KF -->|"consume · MANUAL_ACK"| NS
+
+    subgraph CONSUMERS["Consumers"]
+        NS["Notification Service · :8083\n3 Concurrent Consumers\nMANUAL_IMMEDIATE ack\nDispatcher Pattern"]
+    end
+
+    OS --- PGO[("PostgreSQL\norders_db")]
+    US --- PGU[("PostgreSQL\nusers_db")]
+    US --- RC[("Redis\nCache TTL 10 min")]
+    GW --- RC
 ```
 
 ---
@@ -54,28 +58,27 @@ Reference implementation of an event-driven microservices architecture, based on
 ### Microservices
 
 #### 1. `api-gateway` — Spring Cloud Gateway
-- Dynamic routing to downstream microservices
 - IP-based rate limiting with Redis (100 req/s)
-- Centralized JWT validation
-- Circuit breaker with Resilience4j per route
-- Correlation ID injection via `LoggingFilter`
+- Circuit breaker per route with Resilience4j + fallback responses
+- Centralized JWT validation before forwarding requests
+- Correlation ID injection via `LoggingFilter` for distributed tracing
 
 #### 2. `order-service` — Order Management
-- Full order lifecycle with state machine (PENDING → CONFIRMED → SHIPPED → DELIVERED)
-- Kafka event publisher (`order.created`, `order.updated`) with **Outbox Pattern**
-- Idempotent producer (acks=all, retries=3) for exactly-once guarantee
-- Database: PostgreSQL with Flyway migrations
+- Full order lifecycle: `PENDING → CONFIRMED → SHIPPED → DELIVERED`
+- **Outbox Pattern** — order + outbox event saved in same transaction, relayed to Kafka via `@Scheduled` every 5 s
+- Idempotent Kafka producer (`acks=all`, `retries=3`, `enable.idempotence=true`)
+- Flyway migrations + ProblemDetail error responses (RFC 7807)
 
 #### 3. `user-service` — User Management
-- Registration + JWT authentication (JJWT, HMAC-SHA256)
-- Kafka event publisher (`user.registered`, `user.updated`)
-- Redis Cache-Aside (10 min TTL) for frequent queries
-- Database: PostgreSQL
+- JWT authentication with JJWT (HMAC-SHA256)
+- Redis Cache-Aside (10 min TTL) — miss populates cache, hit skips DB
+- Kafka publisher on register/update events
+- Flyway migrations
 
 #### 4. `notification-service` — Notifications
-- Multi-topic Kafka consumer (MANUAL_IMMEDIATE ack)
+- `@KafkaListener` consuming multiple topics with `MANUAL_IMMEDIATE` ack
 - 3 concurrent consumers for throughput
-- Dispatcher pattern for flexible notification routing
+- Dispatcher pattern for extensible notification routing
 
 ---
 
@@ -83,13 +86,12 @@ Reference implementation of an event-driven microservices architecture, based on
 
 | Pattern | Description | Service |
 |---|---|---|
-| **Outbox Pattern** | At-least-once delivery guarantee | order-service |
-| **Saga (Choreography)** | Distributed transaction coordination | All services |
-| **Circuit Breaker** | Fault tolerance, fallback responses | api-gateway |
+| **Outbox Pattern** | At-least-once delivery via DB + scheduler relay | order-service |
+| **Saga (Choreography)** | Distributed coordination via Kafka events | All |
+| **Circuit Breaker** | Fault tolerance + fallback responses | api-gateway |
 | **Cache-Aside** | Redis cache for frequent reads | user-service |
-| **API Gateway** | Single entry point, cross-cutting concerns | api-gateway |
-| **CQRS** | Read/write separation | order-service |
-| **Correlation ID** | Distributed tracing across services | api-gateway |
+| **API Gateway** | Single entry point + cross-cutting concerns | api-gateway |
+| **Correlation ID** | Distributed tracing across all services | api-gateway |
 
 ---
 
@@ -103,28 +105,27 @@ Reference implementation of an event-driven microservices architecture, based on
 #### Start the full stack
 
 ```bash
-# Clone the repository
 git clone https://github.com/cdgutierrez6/microservices-demo.git
 cd microservices-demo
 
-# Start infrastructure (Kafka, PostgreSQL, Redis, Zookeeper)
-docker-compose up -d kafka postgres-orders postgres-users redis
+# Start infrastructure first (Kafka needs ~20s to be ready)
+docker-compose up -d kafka postgres-orders postgres-users redis zookeeper
 
-# Wait for Kafka to be ready (~20s), then start all services
+# Then start all services
 docker-compose up -d
 
-# Verify running services
+# Verify all containers are healthy
 docker-compose ps
 ```
 
 #### Available Endpoints
 
 ```
-GET  http://localhost:8080/orders          → List orders (via Gateway)
-POST http://localhost:8080/orders          → Create order
-GET  http://localhost:8080/users           → List users
 POST http://localhost:8080/users/register  → Register user
 POST http://localhost:8080/auth/login      → Get JWT token
+GET  http://localhost:8080/users/{id}      → Get user (cached)
+POST http://localhost:8080/orders          → Create order
+GET  http://localhost:8080/orders/{id}     → Get order status
 ```
 
 ---
@@ -138,36 +139,80 @@ microservices-demo/
 │   │   ├── config/           # Routes, CircuitBreaker, RateLimiter
 │   │   ├── filter/           # LoggingFilter (Correlation ID)
 │   │   └── controller/       # FallbackController
-│   ├── pom.xml
 │   └── Dockerfile
 ├── order-service/
 │   ├── src/main/java/com/cdgutierrez/orders/
 │   │   ├── controller/       # OrderController (5 endpoints)
-│   │   ├── service/          # OrderService + transactional logic
+│   │   ├── service/          # OrderService (TX: order + outbox)
 │   │   ├── repository/       # OrderRepository, OutboxRepository
 │   │   ├── kafka/            # OrderEventProducer (@Scheduled relay)
-│   │   ├── outbox/           # OutboxEvent entity + Outbox Pattern
-│   │   └── model/            # Order, OrderItem (state machine)
+│   │   ├── outbox/           # OutboxEvent entity
+│   │   └── model/            # Order (state machine), OrderItem
 │   ├── src/main/resources/db/migration/  # Flyway V1
-│   ├── pom.xml
 │   └── Dockerfile
 ├── user-service/
 │   ├── src/main/java/com/cdgutierrez/users/
-│   │   ├── controller/       # UserController (register, login, getById)
+│   │   ├── controller/       # UserController
 │   │   ├── service/          # UserService (cache-aside + Kafka)
 │   │   ├── security/         # JwtService (JJWT HMAC-SHA256)
 │   │   └── model/            # User entity
-│   ├── pom.xml
 │   └── Dockerfile
 ├── notification-service/
 │   ├── src/main/java/com/cdgutierrez/notifications/
 │   │   ├── consumer/         # OrderEventConsumer (MANUAL_IMMEDIATE ack)
 │   │   ├── service/          # NotificationService (dispatcher)
 │   │   └── config/           # KafkaConfig (3 concurrent consumers)
-│   ├── pom.xml
 │   └── Dockerfile
 ├── docker-compose.yml
-└── pom.xml                   # Parent POM (Spring Boot 3.3.4, Java 17)
+└── pom.xml                   # Parent POM — Spring Boot 3.3.4, Java 17
+```
+
+---
+
+### Running Tests
+
+```bash
+# Run tests for all modules
+mvn test
+
+# Run tests for a specific service
+mvn test -pl order-service
+mvn test -pl user-service
+
+# With JaCoCo coverage report
+mvn verify
+
+# Open coverage report (after mvn verify)
+# target/site/jacoco/index.html
+
+# Skip tests for faster builds
+mvn package -DskipTests
+```
+
+| Service | Test focus | Tools |
+|---|---|---|
+| `order-service` | Order state machine, Outbox Pattern, Kafka producer | JUnit 5 + Mockito + Testcontainers |
+| `user-service` | JWT generation/validation, Cache-Aside logic | JUnit 5 + Mockito |
+| `api-gateway` | Route configuration, Circuit Breaker | Spring WebFlux Test |
+
+**Example test:**
+
+```java
+@Test
+void createOrder_WhenUserExists_ShouldPersistOrderAndOutboxEvent() {
+    // Arrange
+    var command = new CreateOrderRequest(userId, List.of(
+        new OrderItemRequest("Product A", 2, new BigDecimal("49.99"))
+    ));
+
+    // Act
+    var response = orderService.createOrder(command);
+
+    // Assert
+    assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
+    assertThat(outboxRepository.findByOrderId(response.id())).isPresent();
+    // Both saved in same transaction — Outbox Pattern guaranteed
+}
 ```
 
 ---
@@ -193,6 +238,7 @@ microservices-demo/
 - **Resilience4j** (circuit breaker, retry)
 - **JJWT** (stateless JWT authentication)
 - **Flyway** (database migrations)
+- **JUnit 5** + **Mockito** + **Testcontainers** (testing)
 
 ---
 
@@ -221,35 +267,39 @@ Implementación de referencia de una arquitectura de microservicios orientada a 
 
 ### Arquitectura del Sistema
 
-```
-                          ┌─────────────────────────────────────────────────┐
-                          │                  API GATEWAY                    │
-                          │         (Spring Cloud Gateway :8080)            │
-                          └──────────┬──────────────┬───────────────────────┘
-                                     │              │
-                    ┌────────────────▼──┐    ┌──────▼────────────────┐
-                    │  ORDER SERVICE    │    │   USER SERVICE        │
-                    │  (Java/Spring)    │    │   (Java/Spring)       │
-                    │  :8081            │    │   :8082               │
-                    └──────────┬────────┘    └──────┬────────────────┘
-                               │                    │
-                               ▼                    ▼
-                    ┌─────────────────────────────────────────┐
-                    │           APACHE KAFKA                  │
-                    │     orders-topic | user-events          │
-                    │     notifications-topic                 │
-                    └──────────┬──────────────────────────────┘
-                               │
-                    ┌──────────▼────────────────┐
-                    │   NOTIFICATION SERVICE    │
-                    │   (Consumer/Producer)     │
-                    │   :8083                   │
-                    └───────────────────────────┘
+```mermaid
+graph TB
+    Client(["👤 Cliente"]) --> GW
 
-  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-  │  PostgreSQL      │   │  PostgreSQL      │   │  Redis Cache    │
-  │  orders_db       │   │  users_db        │   │  (Sessions)     │
-  └─────────────────┘   └─────────────────┘   └─────────────────┘
+    subgraph GATEWAY["API Gateway · :8080"]
+        GW["Spring Cloud Gateway\nRate Limiting · Redis 100 req/s\nCircuit Breaker · Resilience4j\nValidación JWT · Correlation ID"]
+    end
+
+    GW --> OS
+    GW --> US
+
+    subgraph SERVICES["Microservicios"]
+        OS["Order Service · :8081\nMáquina de estados\nOutbox Pattern\nMigraciones Flyway"]
+        US["User Service · :8082\nJWT Auth · JJWT\nCache-Aside · Redis\nPublicador Kafka"]
+    end
+
+    OS -->|"order.created / order.updated"| KF
+    US -->|"user.registered"| KF
+
+    subgraph KAFKA["Bus de Eventos"]
+        KF[["Apache Kafka\norders-topic · user-events\nnotifications-topic"]]
+    end
+
+    KF -->|"consume · MANUAL_ACK"| NS
+
+    subgraph CONSUMERS["Consumidores"]
+        NS["Notification Service · :8083\n3 Consumers Concurrentes\nack MANUAL_IMMEDIATE\nPatrón Dispatcher"]
+    end
+
+    OS --- PGO[("PostgreSQL\norders_db")]
+    US --- PGU[("PostgreSQL\nusers_db")]
+    US --- RC[("Redis\nCache TTL 10 min")]
+    GW --- RC
 ```
 
 ---
@@ -257,28 +307,27 @@ Implementación de referencia de una arquitectura de microservicios orientada a 
 ### Microservicios
 
 #### 1. `api-gateway` — Spring Cloud Gateway
-- Enrutamiento dinámico a microservicios
 - Rate limiting por IP con Redis (100 req/s)
-- Validación JWT centralizada
-- Circuit breaker con Resilience4j por ruta
-- Inyección de Correlation ID vía `LoggingFilter`
+- Circuit breaker por ruta con Resilience4j + respuestas fallback
+- Validación JWT centralizada antes de reenviar requests
+- Inyección de Correlation ID vía `LoggingFilter` para trazabilidad distribuida
 
 #### 2. `order-service` — Gestión de Órdenes
-- Ciclo de vida completo con máquina de estados (PENDING → CONFIRMED → SHIPPED → DELIVERED)
-- Publicador Kafka (`order.created`, `order.updated`) con **Outbox Pattern**
-- Productor idempotente (acks=all, retries=3) para garantía exactly-once
-- Base de datos: PostgreSQL con migraciones Flyway
+- Ciclo de vida completo: `PENDING → CONFIRMED → SHIPPED → DELIVERED`
+- **Outbox Pattern** — orden + evento outbox guardados en la misma transacción, retransmitidos a Kafka vía `@Scheduled` cada 5 s
+- Productor Kafka idempotente (`acks=all`, `retries=3`, `enable.idempotence=true`)
+- Migraciones Flyway + respuestas de error ProblemDetail (RFC 7807)
 
 #### 3. `user-service` — Gestión de Usuarios
-- Registro + autenticación JWT (JJWT, HMAC-SHA256)
-- Publicador Kafka (`user.registered`, `user.updated`)
-- Cache-Aside con Redis (TTL 10 min) para consultas frecuentes
-- Base de datos: PostgreSQL
+- Autenticación JWT con JJWT (HMAC-SHA256)
+- Cache-Aside Redis (TTL 10 min) — miss llena caché, hit evita consulta a BD
+- Publicador Kafka en eventos de registro/actualización
+- Migraciones Flyway
 
 #### 4. `notification-service` — Notificaciones
-- Consumer Kafka multi-topic (ack MANUAL_IMMEDIATE)
+- `@KafkaListener` consumiendo múltiples topics con ack `MANUAL_IMMEDIATE`
 - 3 consumers concurrentes para mayor throughput
-- Patrón Dispatcher para routing flexible de notificaciones
+- Patrón Dispatcher para routing de notificaciones extensible
 
 ---
 
@@ -286,13 +335,12 @@ Implementación de referencia de una arquitectura de microservicios orientada a 
 
 | Patrón | Descripción | Servicio |
 |---|---|---|
-| **Outbox Pattern** | Garantía de entrega at-least-once | order-service |
-| **Saga (Choreography)** | Coordinación de transacciones distribuidas | Todos |
-| **Circuit Breaker** | Tolerancia a fallos, respuestas fallback | api-gateway |
+| **Outbox Pattern** | Entrega at-least-once vía BD + relay programado | order-service |
+| **Saga (Choreography)** | Coordinación distribuida vía eventos Kafka | Todos |
+| **Circuit Breaker** | Tolerancia a fallos + respuestas fallback | api-gateway |
 | **Cache-Aside** | Cache Redis para lecturas frecuentes | user-service |
-| **API Gateway** | Punto de entrada único, cross-cutting | api-gateway |
-| **CQRS** | Separación lectura/escritura | order-service |
-| **Correlation ID** | Trazabilidad distribuida entre servicios | api-gateway |
+| **API Gateway** | Punto de entrada único + cross-cutting | api-gateway |
+| **Correlation ID** | Trazabilidad distribuida entre todos los servicios | api-gateway |
 
 ---
 
@@ -306,28 +354,27 @@ Implementación de referencia de una arquitectura de microservicios orientada a 
 #### Levantar todo el stack
 
 ```bash
-# Clonar el repositorio
 git clone https://github.com/cdgutierrez6/microservices-demo.git
 cd microservices-demo
 
-# Levantar infraestructura (Kafka, PostgreSQL, Redis, Zookeeper)
-docker-compose up -d kafka postgres-orders postgres-users redis
+# Levantar infraestructura primero (Kafka necesita ~20s)
+docker-compose up -d kafka postgres-orders postgres-users redis zookeeper
 
-# Esperar que Kafka esté listo (~20s) y levantar servicios
+# Luego levantar todos los servicios
 docker-compose up -d
 
-# Verificar servicios activos
+# Verificar que todos los containers estén saludables
 docker-compose ps
 ```
 
 #### Endpoints disponibles
 
 ```
-GET  http://localhost:8080/orders          → Listar órdenes (vía Gateway)
-POST http://localhost:8080/orders          → Crear orden
-GET  http://localhost:8080/users           → Listar usuarios
 POST http://localhost:8080/users/register  → Registrar usuario
 POST http://localhost:8080/auth/login      → Obtener JWT
+GET  http://localhost:8080/users/{id}      → Obtener usuario (cacheado)
+POST http://localhost:8080/orders          → Crear orden
+GET  http://localhost:8080/orders/{id}     → Ver estado de orden
 ```
 
 ---
@@ -341,36 +388,76 @@ microservices-demo/
 │   │   ├── config/           # Rutas, CircuitBreaker, RateLimiter
 │   │   ├── filter/           # LoggingFilter (Correlation ID)
 │   │   └── controller/       # FallbackController
-│   ├── pom.xml
 │   └── Dockerfile
 ├── order-service/
 │   ├── src/main/java/com/cdgutierrez/orders/
 │   │   ├── controller/       # OrderController (5 endpoints)
-│   │   ├── service/          # OrderService + lógica transaccional
-│   │   ├── repository/       # OrderRepository, OutboxRepository
+│   │   ├── service/          # OrderService (TX: orden + outbox)
 │   │   ├── kafka/            # OrderEventProducer (@Scheduled relay)
-│   │   ├── outbox/           # OutboxEvent + Outbox Pattern
-│   │   └── model/            # Order, OrderItem (máquina de estados)
-│   ├── src/main/resources/db/migration/  # Flyway V1
-│   ├── pom.xml
+│   │   ├── outbox/           # OutboxEvent entity
+│   │   └── model/            # Order (máquina de estados), OrderItem
 │   └── Dockerfile
 ├── user-service/
 │   ├── src/main/java/com/cdgutierrez/users/
-│   │   ├── controller/       # UserController (register, login, getById)
 │   │   ├── service/          # UserService (cache-aside + Kafka)
 │   │   ├── security/         # JwtService (JJWT HMAC-SHA256)
-│   │   └── model/            # User entity
-│   ├── pom.xml
 │   └── Dockerfile
 ├── notification-service/
 │   ├── src/main/java/com/cdgutierrez/notifications/
 │   │   ├── consumer/         # OrderEventConsumer (ack MANUAL_IMMEDIATE)
 │   │   ├── service/          # NotificationService (dispatcher)
 │   │   └── config/           # KafkaConfig (3 consumers concurrentes)
-│   ├── pom.xml
 │   └── Dockerfile
 ├── docker-compose.yml
-└── pom.xml                   # POM padre (Spring Boot 3.3.4, Java 17)
+└── pom.xml                   # POM padre — Spring Boot 3.3.4, Java 17
+```
+
+---
+
+### Correr Tests
+
+```bash
+# Correr tests de todos los módulos
+mvn test
+
+# Correr tests de un servicio específico
+mvn test -pl order-service
+mvn test -pl user-service
+
+# Con reporte de cobertura JaCoCo
+mvn verify
+
+# Abrir reporte de cobertura (después de mvn verify)
+# target/site/jacoco/index.html
+
+# Omitir tests para builds más rápidos
+mvn package -DskipTests
+```
+
+| Servicio | Foco de tests | Herramientas |
+|---|---|---|
+| `order-service` | Máquina de estados, Outbox Pattern, productor Kafka | JUnit 5 + Mockito + Testcontainers |
+| `user-service` | Generación/validación JWT, lógica Cache-Aside | JUnit 5 + Mockito |
+| `api-gateway` | Configuración de rutas, Circuit Breaker | Spring WebFlux Test |
+
+**Ejemplo de test:**
+
+```java
+@Test
+void createOrder_WhenUserExists_ShouldPersistOrderAndOutboxEvent() {
+    // Arrange
+    var command = new CreateOrderRequest(userId, List.of(
+        new OrderItemRequest("Producto A", 2, new BigDecimal("49.99"))
+    ));
+
+    // Act
+    var response = orderService.createOrder(command);
+
+    // Assert
+    assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
+    assertThat(outboxRepository.findByOrderId(response.id())).isPresent();
+    // Ambos guardados en la misma transacción — garantía del Outbox Pattern
+}
 ```
 
 ---
@@ -396,6 +483,7 @@ microservices-demo/
 - **Resilience4j** (circuit breaker, retry)
 - **JJWT** (autenticación JWT stateless)
 - **Flyway** (migraciones de base de datos)
+- **JUnit 5** + **Mockito** + **Testcontainers** (testing)
 
 ---
 
