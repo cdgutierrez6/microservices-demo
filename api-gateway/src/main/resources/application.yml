@@ -31,6 +31,11 @@ spring:
               args:
                 name: user-service-cb
                 fallbackUri: forward:/fallback/users
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@ipKeyResolver}"
 
         - id: notification-service
           uri: http://notification-service:8083
@@ -49,7 +54,7 @@ management:
         include: health,info,metrics,gateway
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 resilience4j:
   circuitbreaker:

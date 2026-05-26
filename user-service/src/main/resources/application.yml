@@ -27,11 +27,15 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 jwt:
-  secret: ${JWT_SECRET:change-me-in-production-at-least-32-chars!!}
-  expiration-ms: 3600000
+  # JWT_SECRET must be set as an environment variable — no default to prevent insecure deployments
+  secret: ${JWT_SECRET}
+  expiration-ms: ${JWT_EXPIRATION_MS:3600000}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
