@@ -1,0 +1,74 @@
+name: CI — Microservices Demo
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # ── 1. Build + Tests + JaCoCo ──────────────────────────────────────────────
+  test:
+    name: 🧪 Build, Tests & JaCoCo Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # SonarCloud needs full git history
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+
+      - name: Build and test all modules (JaCoCo runs on verify)
+        run: mvn verify --batch-mode --no-transfer-progress
+
+      - name: Upload JaCoCo reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports
+          path: |
+            order-service/target/site/jacoco/jacoco.xml
+            user-service/target/site/jacoco/jacoco.xml
+            notification-service/target/site/jacoco/jacoco.xml
+          retention-days: 1
+
+  # ── 2. SonarCloud Quality Gate ─────────────────────────────────────────────
+  sonar:
+    name: 📊 SonarCloud
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+
+      # Re-run verify to regenerate JaCoCo XML for Sonar (uses Maven cache)
+      - name: Regenerate JaCoCo coverage
+        run: mvn verify --batch-mode --no-transfer-progress
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=cdgutierrez6_microservices-demo
+            -Dsonar.organization=cdgutierrez6
+            -Dsonar.coverage.jacoco.xmlReportPaths=order-service/target/site/jacoco/jacoco.xml,user-service/target/site/jacoco/jacoco.xml,notification-service/target/site/jacoco/jacoco.xml
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.java.source=17
