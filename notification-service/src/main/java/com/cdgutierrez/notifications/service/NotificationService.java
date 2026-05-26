@@ -9,12 +9,17 @@ import org.springframework.stereotype.Service;
 public class NotificationService {
 
     public void process(String eventType, JsonNode payload) {
+        // Guard: Java switch on null throws NullPointerException
+        if (eventType == null) {
+            log.warn("Received null event type — ignoring");
+            return;
+        }
         switch (eventType) {
-            case "ORDER_CREATED" -> notifyOrderCreated(payload);
+            case "ORDER_CREATED"   -> notifyOrderCreated(payload);
             case "ORDER_CONFIRMED" -> notifyOrderConfirmed(payload);
             case "ORDER_CANCELLED" -> notifyOrderCancelled(payload);
             case "USER_REGISTERED" -> notifyUserRegistered(payload);
-            default -> log.warn("Unhandled event type: {}", eventType);
+            default                -> log.warn("Unhandled event type: {}", eventType);
         }
     }
 
