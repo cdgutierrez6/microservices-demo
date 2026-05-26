@@ -2,7 +2,6 @@ package com.cdgutierrez.users.service;
 
 import com.cdgutierrez.users.dto.LoginRequest;
 import com.cdgutierrez.users.dto.RegisterRequest;
-import com.cdgutierrez.users.dto.UserResponse;
 import com.cdgutierrez.users.model.User;
 import com.cdgutierrez.users.repository.UserRepository;
 import com.cdgutierrez.users.security.JwtService;
@@ -43,7 +42,8 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        // lenient: register/login tests do not touch Redis; only getById tests do
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
     }
 
     // ── register ─────────────────────────────────────────────────────────────
@@ -152,11 +152,14 @@ class UserServiceTest {
     @Test
     void getById_cacheHit_shouldReturnFromRedisWithoutHittingDatabase() {
         var id = UUID.randomUUID();
-        var cachedJson = "{\"id\":\"" + id + "\",\"name\":\"Cristian\",\"email\":\"" + TEST_EMAIL + "\"}";
+        // Full JSON with all UserResponse fields — fromJson() is a real static method, no mock needed
+        var cachedJson = "{\"id\":\"" + id + "\","
+                + "\"name\":\"Cristian\","
+                + "\"email\":\"" + TEST_EMAIL + "\","
+                + "\"active\":true,"
+                + "\"createdAt\":\"2024-01-01T00:00:00Z\"}";
         when(valueOps.get("user:" + id)).thenReturn(cachedJson);
-        when(UserResponse.fromJson(cachedJson)).thenCallRealMethod();
 
-        // We only care that findById is NOT called
         userService.getById(id);
 
         verify(userRepository, never()).findById(any());
