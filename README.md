@@ -6,6 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io)
+[![CI](https://github.com/cdgutierrez6/microservices-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/cdgutierrez6/microservices-demo/actions/workflows/ci.yml)
 
 ---
 
