@@ -1,0 +1,7 @@
+schema: spec-driven
+context: |
+  microservices-demo: Arquitectura de microservicios con Java Spring Boot y Apache Kafka.
+  Stack: Spring Boot 3 + Java 21, Apache Kafka (producers/consumers), Spring Data JPA + PostgreSQL, Docker Compose, API Gateway (Spring Cloud Gateway).
+  Servicios: order-service, user-service, notification-service, api-gateway.
+  Patrón: cada servicio es autónomo con su propia DB; comunicación asíncrona via Kafka topics; API Gateway como punto de entrada único.
+  Objetivo: demo de patrones enterprise para sistemas distribuidos de alto volumen con mensajería event-driven.
