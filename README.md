@@ -1,4 +1,4 @@
-# Microservices Demo — Enterprise Distributed Architecture
+# Microservices Demo — Event-Driven Reference Implementation
 
 [![Java](https://img.shields.io/badge/Java_17-ED8B00?style=flat-square&logo=openjdk&logoColor=white)](https://www.java.com)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot_3-6DB33F?style=flat-square&logo=spring-boot&logoColor=white)](https://spring.io/projects/spring-boot)
@@ -13,7 +13,9 @@
 <details open>
 <summary><h2>🇺🇸 English</h2></summary>
 
-Reference implementation of an event-driven microservices architecture, based on patterns used in vehicle telemetry systems processing **millions of daily events in production**.
+Reference implementation and portfolio learning project that demonstrates event-driven microservices patterns — Outbox, Saga (choreography), Circuit Breaker, Cache-Aside, API Gateway — with generic `order`, `user`, and `notification` services on Spring Boot + Kafka. It is built for learning and demonstration, **not** a production deployment.
+
+> **Status & Scope** — A self-contained learning / portfolio build that runs locally via Docker Compose. The services are illustrative (`order` / `user` / `notification`), not a real product; the repo does not run in production or at scale. The patterns are real and functional — the scale is not claimed.
 
 ---
 
@@ -243,9 +245,9 @@ void createOrder_WhenUserExists_ShouldPersistOrderAndOutboxEvent() {
 
 ---
 
-### Production Context
+### Background
 
-This architecture is based on patterns implemented at **SATRACK** (2022–2025), where I led the technological evolution of vehicle telemetry systems processing real-time GPS events for national-scale vehicle fleets.
+The patterns in this repository reflect production experience the author gained at **SATRACK** (2022–2025), building real-time vehicle-telemetry microservices in .NET and Java. That production system — and its scale — belongs to SATRACK; **this repository is an independent learning implementation of the same patterns**, not that system, and does not process production traffic.
 
 ---
 
@@ -262,7 +264,9 @@ This architecture is based on patterns implemented at **SATRACK** (2022–2025),
 <details>
 <summary><h2>🇨🇴 Español</h2></summary>
 
-Implementación de referencia de una arquitectura de microservicios orientada a eventos, basada en patrones utilizados en sistemas de telemetría vehicular procesando **millones de eventos diarios en producción**.
+Implementación de referencia y proyecto de aprendizaje / portafolio que demuestra patrones de microservicios orientados a eventos — Outbox, Saga (coreografía), Circuit Breaker, Cache-Aside, API Gateway — con servicios genéricos `order`, `user` y `notification` sobre Spring Boot + Kafka. Es para aprendizaje y demostración, **no** un despliegue en producción.
+
+> **Estado y Alcance** — Un build de aprendizaje / portafolio autocontenido que corre localmente vía Docker Compose. Los servicios son ilustrativos (`order` / `user` / `notification`), no un producto real; el repo no corre en producción ni a escala. Los patrones son reales y funcionales — la escala no se reclama.
 
 ---
 
@@ -488,9 +492,9 @@ void createOrder_WhenUserExists_ShouldPersistOrderAndOutboxEvent() {
 
 ---
 
-### Contexto de Producción
+### Contexto / Origen
 
-Esta arquitectura está basada en patrones implementados en **SATRACK** (2022–2025), donde lideré la evolución tecnológica de sistemas de telemetría vehicular procesando eventos GPS en tiempo real para flotas a escala nacional.
+Los patrones de este repositorio reflejan la experiencia de producción que el autor adquirió en **SATRACK** (2022–2025), construyendo microservicios de telemetría vehicular en tiempo real en .NET y Java. Ese sistema de producción — y su escala — pertenece a SATRACK; **este repositorio es una implementación de aprendizaje independiente de los mismos patrones**, no ese sistema, y no procesa tráfico de producción.
 
 ---
 
